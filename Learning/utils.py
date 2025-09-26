@@ -17,7 +17,7 @@ def is_valid_mdp(
     Mandatory:
         S     : set of states
         A     : set of actions
-        H     : horizon (positive integer)
+        H     : horizon (positive integer) -> number of moves until stop of episode
         gamma : discount factor in [0,1)
     
     Optional:
