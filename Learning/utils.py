@@ -1,18 +1,8 @@
 from __future__ import annotations
 
 import random
-from typing import (
-    Any,
-    Callable,
-    Dict,
-    Iterable,
-    List,
-    Mapping,
-    Optional,
-    Sequence,
-    Tuple,
-    Union,
-)
+from typing import Any, Callable, Dict, Iterable, List, Mapping, Optional, Sequence, Tuple, Union
+from policy.policy import Policy
 
 Number = Union[int, float]
 State = Any
@@ -26,10 +16,20 @@ RewardDictSAS = Mapping[Tuple[State, Action], Mapping[State, Number]]
 
 
 def is_distribution_valid(dist: Mapping[Any, float], tolerance: float = 1e-8) -> bool:
-    """Check that a mapping of outcomes -> probabilities is a valid distribution.
+    """
+    Check if a mapping of outcomes to probabilities is a valid distribution.
 
-    - All probabilities >= 0
-    - Probabilities sum to 1 (within tolerance)
+    Parameters
+    ----------
+    dist : Mapping[Any, float]
+        Mapping of outcomes to probabilities.
+    tolerance : float
+        Allowed deviation from sum 1.
+
+    Returns
+    -------
+    bool
+        True if all probabilities >= 0 and sum to 1 within tolerance.
     """
     if not dist:
         return False
@@ -48,32 +48,30 @@ def is_valid_mdp(
     P: Optional[Union[TransitionDict, Callable[[State, Action], Mapping[State, float]]]] = None,
     r: Optional[Union[RewardDictSA, RewardDictS, RewardDictSAS, Callable[..., Number]]] = None,
 ) -> Tuple[bool, str]:
-    """Validate an MDP tuple where P0, P, r are optional.
+    """
+    Validate a Markov Decision Process (MDP) definition.
 
     Parameters
     ----------
-    S, A
-        Iterables describing finite states and actions (converted to sets internally).
-    H
-        Horizon. If None, it can be considered infinite for validation purposes.
-    gamma
-        Discount factor in [0, 1).
-    P0
-        Optional initial-state distribution (mapping state -> prob).
-    P
-        Optional transition kernel. Either a dict mapping (s,a) -> {s': prob}
-        or a callable P(s, a) -> mapping of next states to probabilities.
-    r
-        Optional reward function. Can be:
-          - mapping (s,a) -> number
-          - mapping s -> number
-          - mapping (s,a) -> {s': number}
-          - callable (s, a) or (s, a, s_next) -> number
+    S : Iterable[State]
+        Set of states.
+    A : Iterable[Action]
+        Set of actions.
+    H : Optional[int]
+        Horizon (None = infinite).
+    gamma : float
+        Discount factor in [0,1).
+    P0 : Optional[Mapping[State, float]]
+        Optional initial state distribution.
+    P : Optional[Union[TransitionDict, Callable]]
+        Optional transition kernel.
+    r : Optional[Union[RewardDictSA, RewardDictS, RewardDictSAS, Callable]]
+        Optional reward function.
 
     Returns
     -------
-    (bool, message)
-        Whether the MDP is valid and a short message.
+    Tuple[bool, str]
+        (is_valid, message)
     """
     S_set = set(S)
     A_set = set(A)
@@ -82,24 +80,19 @@ def is_valid_mdp(
         return False, "State set S is empty."
     if not A_set:
         return False, "Action set A is empty."
-
     if H is not None and (not isinstance(H, int) or H <= 0):
         return False, "Horizon H must be a positive integer or None (infinite)."
-
     if not isinstance(gamma, (int, float)) or not (0 <= gamma < 1):
         return False, "Discount factor gamma must be in [0, 1)."
 
-    # P0
     if P0 is not None:
         if not set(P0.keys()).issubset(S_set):
             return False, "P0 contains states not in S."
         if not is_distribution_valid(P0):
             return False, "P0 is not a valid probability distribution."
 
-    # P
     if P is not None:
         if callable(P):
-            # Can't fully validate callable P w/o querying; check one sample for shape
             try:
                 sample_s = next(iter(S_set))
                 sample_a = next(iter(A_set))
@@ -109,7 +102,6 @@ def is_valid_mdp(
             except Exception as e:
                 return False, f"Callable P raised an error when sampled: {e}"
         else:
-            # dict-based validation
             for (s, a), dist in P.items():
                 if s not in S_set:
                     return False, f"Transition key state {s} not in S."
@@ -120,16 +112,13 @@ def is_valid_mdp(
                 if not is_distribution_valid(dist):
                     return False, f"Transition distribution for {(s,a)} is not valid."
 
-    # r
     if r is not None:
         if callable(r):
-            # Can't validate arbitrary callable; try to call with (s,a)
             try:
                 sample_s = next(iter(S_set))
                 sample_a = next(iter(A_set))
                 _ = r(sample_s, sample_a)
             except TypeError:
-                # maybe takes (s,a,s_next)? That's acceptable too
                 try:
                     sample_s_next = next(iter(S_set))
                     _ = r(sample_s, sample_a, sample_s_next)
@@ -138,8 +127,6 @@ def is_valid_mdp(
             except Exception as e:
                 return False, f"Callable r raised an error when sampled: {e}"
         else:
-            # mapping-based: verify keys
-            # (s,a) -> number
             if all(isinstance(k, tuple) and len(k) == 2 for k in r.keys()):
                 for (s, a), val in r.items():
                     if s not in S_set or a not in A_set:
@@ -147,17 +134,14 @@ def is_valid_mdp(
                     if not isinstance(val, (int, float)):
                         return False, f"Reward for {(s,a)} is not numeric."
             else:
-                # maybe s -> number or (s,a) -> dict of s' -> number
                 sample_key = next(iter(r.keys()))
                 if sample_key in S_set:
-                    # s -> number mapping
                     for s, val in r.items():
                         if s not in S_set:
                             return False, "Reward mapping contains state not in S."
                         if not isinstance(val, (int, float)):
                             return False, f"Reward for state {s} is not numeric."
                 else:
-                    # (s,a) -> {s': number}
                     for (s, a), mapping in r.items():
                         if s not in S_set or a not in A_set:
                             return False, f"Reward key {(s,a)} contains invalid state/action."
@@ -173,37 +157,35 @@ def sample_next_state(
     P: Union[TransitionDict, Callable[[State, Action], Mapping[State, float]]],
     rng: Optional[random.Random] = None,
 ) -> State:
-    """Sample a next state given current state `s`, action `a`, and transition kernel `P`.
+    """
+    Sample the next state given the current state, action, and transition kernel.
 
-    `P` can be either:
-      - a mapping (s,a) -> {s': prob}
-      - a callable P(s, a) -> mapping of next states to probabilities
+    Parameters
+    ----------
+    s : State
+        Current state.
+    a : Action
+        Action taken.
+    P : Union[TransitionDict, Callable]
+        Transition kernel.
+    rng : Optional[random.Random]
+        Random number generator.
 
-    Returns a sampled next-state (respecting the distribution).
+    Returns
+    -------
+    State
+        Sampled next state.
     """
     if rng is None:
         rng = random
-
     if P is None:
         raise ValueError("Transition kernel P must be provided to sample next state.")
-
-    if callable(P):
-        dist = P(s, a)
-    else:
-        if (s, a) not in P:
-            raise ValueError(f"Transition kernel undefined for state {s} and action {a}.")
-        dist = P[(s, a)]
-
-    if not dist:
-        raise ValueError(f"Empty distribution for state {s} and action {a}.")
-
+    dist = P(s, a) if callable(P) else P[(s, a)]
     choices = list(dist.keys())
     weights = list(dist.values())
-    # use rng.choices for sampling when rng is random.Random
     try:
         return rng.choices(choices, weights=weights, k=1)[0]
     except AttributeError:
-        # fallback for numpy or other RNG objects
         cum = []
         ssum = 0.0
         for w in weights:
@@ -222,41 +204,42 @@ def expected_reward(
     r: Union[RewardDictSA, RewardDictS, RewardDictSAS, Callable[..., Number]],
     s_next: Optional[State] = None,
 ) -> Number:
-    """Return expected immediate reward r(s,a).
+    """
+    Compute the expected immediate reward for a state-action pair.
 
-    Supports:
-    - mapping (s,a) -> number
-    - mapping s -> number
-    - mapping (s,a) -> {s': number} (returns value for s_next)
-    - callable r(s, a) or r(s, a, s_next)
+    Parameters
+    ----------
+    s : State
+        Current state.
+    a : Action
+        Action taken.
+    r : Union[RewardDictSA, RewardDictS, RewardDictSAS, Callable]
+        Reward specification.
+    s_next : Optional[State]
+        Optional next state (if reward depends on it).
+
+    Returns
+    -------
+    Number
+        Expected reward.
     """
     if callable(r):
-        # try calling with (s,a) then (s,a,s_next)
         try:
             return r(s, a)
         except TypeError:
             if s_next is None:
                 raise ValueError("r appears to expect (s,a,s_next). Provide s_next.")
             return r(s, a, s_next)
-
-    # mapping-based
-    # 1) (s,a) -> number
     key = (s, a)
-    if key in r:  # type: ignore[arg-type]
-        val = r[key]  # type: ignore[index]
+    if key in r:
+        val = r[key]
         if isinstance(val, Mapping):
-            # (s,a) -> {s': number}
             if s_next is None:
                 raise ValueError("Reward mapping depends on next-state; provide s_next.")
-            if s_next not in val:
-                raise KeyError(f"No reward defined for next-state {s_next} under {(s,a)}.")
             return val[s_next]
-        return val  # number
-
-    # 2) s -> number
-    if s in r:  # type: ignore[arg-type]
-        return r[s]  # type: ignore[index]
-
+        return val
+    if s in r:
+        return r[s]
     raise KeyError(f"Reward not defined for state {s} and action {a}.")
 
 
@@ -268,21 +251,38 @@ def sample_noisy_reward(
     noise_std: float = 0.0,
     rng: Optional[random.Random] = None,
 ) -> float:
-    """Return a noisy sample around the expected reward r(s,a).
+    """
+    Sample a noisy reward around the expected reward.
 
-    If noise_std == 0.0 returns the deterministic expected reward.
+    Parameters
+    ----------
+    s : State
+        Current state.
+    a : Action
+        Action taken.
+    r : Union[RewardDictSA, RewardDictS, RewardDictSAS, Callable]
+        Reward specification.
+    s_next : Optional[State]
+        Optional next state.
+    noise_std : float
+        Standard deviation for Gaussian noise.
+    rng : Optional[random.Random]
+        Random number generator.
+
+    Returns
+    -------
+    float
+        Noisy reward sample.
     """
     if rng is None:
         rng = random
     mu = expected_reward(s, a, r, s_next)
-    if noise_std <= 0:
-        return float(mu)
-    return float(rng.gauss(mu, noise_std))
+    return float(mu) if noise_std <= 0 else float(rng.gauss(mu, noise_std))
 
 
 def simulate_episode(
     s0: State,
-    policy: Callable[[State], Action],
+    policy: Policy,
     P: Union[TransitionDict, Callable[[State, Action], Mapping[State, float]]],
     r: Union[RewardDictSA, RewardDictS, RewardDictSAS, Callable[..., Number]],
     H: Optional[int] = None,
@@ -291,25 +291,37 @@ def simulate_episode(
     noise_std: float = 0.0,
     rng: Optional[random.Random] = None,
 ) -> Tuple[List[Tuple[State, Action, float, State]], float]:
-    """Simulate one episode and return (trajectory, total_return).
-
-    trajectory is a list of tuples: (state, action, reward, next_state)
-    total_return is optionally discounted sum if gamma is provided; otherwise
-    it's the undiscounted sum.
+    """
+    Simulate an episode using the given policy.
 
     Parameters
     ----------
-    s0: initial state
-    policy: function mapping state -> action
-    P, r: transition kernel and reward (dict or callable)
-    H: horizon (None means no fixed horizon; use is_terminal or you must provide H)
-    gamma: if provided, compute discounted return
-    is_terminal: optional predicate(state) -> bool to stop episode early
-    noise_std: standard deviation for sampling noisy rewards
+    s0 : State
+        Initial state.
+    policy : Policy
+        Policy to follow.
+    P : Union[TransitionDict, Callable]
+        Transition kernel.
+    r : Union[RewardDictSA, RewardDictS, RewardDictSAS, Callable]
+        Reward specification.
+    H : Optional[int]
+        Horizon.
+    gamma : Optional[float]
+        Discount factor.
+    is_terminal : Optional[Callable[[State], bool]]
+        Function to check terminal states.
+    noise_std : float
+        Noise standard deviation for reward sampling.
+    rng : Optional[random.Random]
+        Random number generator.
+
+    Returns
+    -------
+    Tuple[List[Tuple[State, Action, float, State]], float]
+        (trajectory, total return)
     """
     if rng is None:
         rng = random
-
     state = s0
     trajectory: List[Tuple[State, Action, float, State]] = []
     t = 0
@@ -327,44 +339,26 @@ def simulate_episode(
         reward = sample_noisy_reward(state, action, r, s_next=next_state, noise_std=noise_std, rng=rng)
 
         trajectory.append((state, action, reward, next_state))
-
-        if gamma is None:
-            total_return += reward
-        else:
-            total_return += discount * reward
-            discount *= gamma
-
+        total_return += reward if gamma is None else discount * reward
+        discount *= gamma if gamma is not None else 1.0
         state = next_state
         t += 1
 
     return trajectory, total_return
 
 
-def simulate_random_policy(
-    s0: State,
-    S: Iterable[State],
-    A: Sequence[Action],
-    P: Union[TransitionDict, Callable[[State, Action], Mapping[State, float]]],
-    r: Union[RewardDictSA, RewardDictS, RewardDictSAS, Callable[..., Number]],
-    H: Optional[int] = None,
-    gamma: Optional[float] = None,
-    is_terminal: Optional[Callable[[State], bool]] = None,
-    noise_std: float = 0.0,
-    rng: Optional[random.Random] = None,
-) -> Tuple[List[Tuple[State, Action, float, State]], float]:
-    """Helper: simulate an episode with a uniformly random policy over actions A."""
-    if rng is None:
-        rng = random
-
-    def rand_policy(s: State) -> Action:
-        return rng.choice(list(A))
-
-    return simulate_episode(
-        s0, rand_policy, P, r, H=H, gamma=gamma, is_terminal=is_terminal, noise_std=noise_std, rng=rng
-    )
-
-
 def set_random_seed(seed: Optional[int]) -> random.Random:
-    """Create and return a Random instance seeded with `seed` (or system random if None)."""
-    rng = random.Random(seed)
-    return rng
+    """
+    Create a random number generator with the given seed.
+
+    Parameters
+    ----------
+    seed : Optional[int]
+        Seed for RNG.
+
+    Returns
+    -------
+    random.Random
+        Random number generator instance.
+    """
+    return random.Random(seed)
