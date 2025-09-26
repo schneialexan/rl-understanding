@@ -81,3 +81,23 @@ def sample_next_state(
     next_states = list(P[(s, a)].keys())
     probabilities = list(P[(s, a)].values())
     return random.choices(next_states, weights=probabilities, k=1)[0]
+
+def expected_reward(
+    s: int,
+    a: str,
+    r: Dict[Tuple[int, str], float]
+) -> float:
+    """
+    Return the expected reward for taking action `a` in state `s`.
+
+    Args:
+        s: current state
+        a: action taken
+        r: dictionary mapping (state, action) -> expected reward
+
+    Returns:
+        Expected immediate reward (float)
+    """
+    if (s, a) not in r:
+        raise ValueError(f"Reward not defined for state {s} and action {a}")
+    return r[(s, a)]
